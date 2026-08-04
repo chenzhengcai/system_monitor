@@ -1,0 +1,4 @@
+module SystemStatsC {
+    header "SystemStatsC.h"
+    export *
+}
