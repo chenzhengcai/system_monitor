@@ -77,16 +77,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func observePower() {
         let nc = NSWorkspace.shared.notificationCenter
+        // 观察者在 .main 队列回调，闭包本身不捕获 self，内部再切回 MainActor 访问隔离成员
         observers.append(nc.addObserver(forName: NSWorkspace.willSleepNotification,
-                                         object: nil, queue: .main) { [weak self] _ in
-            self?.stats.stop()
-            self?.logger.info("系统即将休眠，暂停采集")
+                                         object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { (NSApp.delegate as? AppDelegate)?.handleWillSleep() }
         })
         observers.append(nc.addObserver(forName: NSWorkspace.didWakeNotification,
-                                         object: nil, queue: .main) { [weak self] _ in
-            self?.stats.start()
-            self?.logger.info("系统唤醒，恢复采集")
+                                         object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { (NSApp.delegate as? AppDelegate)?.handleDidWake() }
         })
+    }
+
+    private func handleWillSleep() {
+        stats.stop()
+        logger.info("系统即将休眠，暂停采集")
+    }
+
+    private func handleDidWake() {
+        stats.start()
+        logger.info("系统唤醒，恢复采集")
     }
 
     // MARK: - 面板
@@ -105,13 +114,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.orderFrontRegardless()
         self.panel = panel
         saveOrigin(panel.frame.origin)
-
-        // 拖动即持久化位置
-        NotificationCenter.default.addObserver(forName: NSWindow.didMoveNotification,
-                                               object: panel, queue: .main) { [weak self] _ in
-            guard let self, let panel = self.panel else { return }
-            self.saveOrigin(panel.frame.origin)
-        }
+        // 位置在启动时恢复、退出时保存（applicationWillTerminate），足以跨重启保留；
+        // 不在拖动时实时保存，以避免在并发闭包中跨边界访问主线程隔离的窗口属性。
     }
 
     private func defaultTopRightOrigin(for panel: NSPanel) -> NSPoint {
