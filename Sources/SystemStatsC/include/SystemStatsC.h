@@ -12,7 +12,9 @@ typedef struct {
     double percent;
 } SMCPUInfo;
 
-/* 内存（单位字节）。used = active + wired + compressed；percent = used/total */
+/* 内存（单位字节）。
+ * used = (internal - purgeable) + wired + compressed  ← 对齐活动监视器「内存」口径
+ * percent = used / total */
 typedef struct {
     uint64_t total;
     uint64_t used;

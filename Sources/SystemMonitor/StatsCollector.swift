@@ -19,8 +19,12 @@ final class StatsCollector: ObservableObject {
 
     private let queue = DispatchQueue(label: "stats.collector", qos: .utility)
     private var lightTimer: DispatchSourceTimer?
+    private var running = false
 
+    /// 启动后台采集（幂等，可重复调用）。
     func start() {
+        guard !running else { return }
+        running = true
         // 打底采样（结果丢弃，用于建立 delta 基准）
         sm_cpu_tick()
         sm_net_tick()
@@ -30,6 +34,13 @@ final class StatsCollector: ObservableObject {
         t.setEventHandler { [weak self] in self?.onTick() }
         t.resume()
         lightTimer = t
+    }
+
+    /// 停止采集（休眠 / 面板被遮挡时调用，省电）。
+    func stop() {
+        lightTimer?.cancel()
+        lightTimer = nil
+        running = false
     }
 
     // MARK: - private
@@ -48,22 +59,29 @@ final class StatsCollector: ObservableObject {
         let diskOk = diskPath.withCString { p in sm_get_disk(p, &di) == 0 }
         sm_get_network(&ni)
 
-        let newCpu  = ci.percent
-        let newMem  = mi.percent
-        let newDisk = diskOk ? di.percent : 0
+        // 先把需要跨线程传递的标量取出（避免捕获可变变量 → 消除并发告警）
+        let newCpu      = ci.percent
+        let newMem      = mi.percent
+        let newMemUsed  = mi.used
+        let newMemTotal = mi.total
+        let newDisk     = diskOk ? di.percent : 0
+        let newDiskTotal = diskOk ? di.total : 0
+        let newDiskFree  = diskOk ? di.free : 0
+        let newUp       = ni.up_bps
+        let newDown     = ni.down_bps
 
         DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
+            guard let self else { return }
             // CPU 做一阶低通平滑，减弱每秒抖动
             self.cpuPercent  = max(0, min(1, self.cpuPercent * 0.6 + newCpu * 0.4))
             self.memPercent  = max(0, min(1, newMem))
-            self.memUsed     = mi.used
-            self.memTotal    = mi.total
+            self.memUsed     = newMemUsed
+            self.memTotal    = newMemTotal
             self.diskPercent = max(0, min(1, newDisk))
-            self.diskTotal   = diskOk ? di.total : 0
-            self.diskFree    = diskOk ? di.free : 0
-            self.netUp       = ni.up_bps
-            self.netDown     = ni.down_bps
+            self.diskTotal   = newDiskTotal
+            self.diskFree    = newDiskFree
+            self.netUp       = newUp
+            self.netDown     = newDown
         }
     }
 }

@@ -23,11 +23,21 @@ cp "${REL_BIN}" "${APP}/Contents/MacOS/${BIN}"
 cp Resources/Info.plist "${APP}/Contents/Info.plist"
 
 echo "==> ad-hoc 签名"
-codesign --force --sign - "${APP}" 2>/dev/null \
-  || codesign --force --deep --sign - "${APP}" 2>/dev/null \
-  || echo "  (codesign 跳过 — 可能未勾选命令行工具权限)"
+# 不再吞掉 stderr，签名失败直接报错退出（--deep 已被 Apple 标记为废弃，不再使用）。
+if ! codesign --force --sign - "${APP}"; then
+  echo "错误: codesign 失败。请确认已安装『命令行开发者工具』(xcode-select --install) 且终端有签名权限。" >&2
+  exit 1
+fi
 
 echo
 echo "完成: ${APP}"
 echo "运行:  open ${APP}"
-echo "开机自启: 打开后在「系统设置 > 通用 > 登录项」确认 SystemMonitor 已启用"
+echo "开机自启: 打开后右键面板 → 勾选「开机自启」即可（注册的是当前这份 .app 的位置）"
+
+# 可选：将 .app 安装到 /Applications，让登录项指向稳定路径（避免源码目录被清理后失效）。
+if [[ "${1:-}" == "--install" ]]; then
+  echo "==> 安装到 /Applications"
+  rm -rf "/Applications/${APP}"
+  cp -R "${APP}" "/Applications/"
+  echo "已安装: /Applications/${APP}（从该副本启动后再开启开机自启即可）"
+fi

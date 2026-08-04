@@ -26,6 +26,7 @@ static double now_secs(void) {
     return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
 }
 
+/* 进程生命周期内只取一次，避免每 tick 重复 sysctl */
 static uint64_t cached_total_mem(void) {
     static uint64_t m = 0;
     if (m == 0) {
@@ -33,6 +34,25 @@ static uint64_t cached_total_mem(void) {
         if (sysctlbyname("hw.memsize", &m, &len, NULL, 0) != 0) m = 0;
     }
     return m;
+}
+
+/* 页大小是进程生命周期内的常量，缓存一次。
+ * 失败时回退 4096（仅当 sysctl 异常，正常情况下 Apple Silicon 为 16384）。 */
+static uint64_t cached_page_size(void) {
+    static uint64_t ps = 0;
+    if (ps == 0) {
+        size_t len = sizeof(ps);
+        if (sysctlbyname("hw.pagesize", &ps, &len, NULL, 0) != 0) ps = 4096;
+    }
+    return ps;
+}
+
+/* host port 进程生命周期内只取一次 send right，避免 mach_host_self()
+ * 每次调用新增引用却从不释放导致的引用计数泄漏。 */
+static mach_port_t get_host_port(void) {
+    static mach_port_t h = MACH_PORT_NULL;
+    if (h == MACH_PORT_NULL) h = mach_host_self();
+    return h;
 }
 
 /* ---------------- 整体 CPU ---------------- */
@@ -45,7 +65,7 @@ void sm_cpu_tick(void) {
     natural_t numCpu = 0;
     processor_cpu_load_info_t cpuLoad = NULL;
     mach_msg_type_number_t numCpuInfo = 0;
-    kern_return_t kr = host_processor_info(mach_host_self(), PROCESSOR_CPU_LOAD_INFO,
+    kern_return_t kr = host_processor_info(get_host_port(), PROCESSOR_CPU_LOAD_INFO,
                                             &numCpu, (processor_info_array_t *)&cpuLoad, &numCpuInfo);
     if (kr != KERN_SUCCESS) return;
 
@@ -81,18 +101,25 @@ int sm_get_memory(SMMemInfo *out) {
     uint64_t totalMem = cached_total_mem();
     if (totalMem == 0) return -1;
 
-    vm_size_t pageSize = 4096;
-    host_page_size(mach_host_self(), &pageSize);
+    uint64_t pageSize = cached_page_size();
 
     vm_statistics64_data_t vmstat;
     mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
-    if (host_statistics64(mach_host_self(), HOST_VM_INFO64,
+    if (host_statistics64(get_host_port(), HOST_VM_INFO64,
                           (host_info64_t)&vmstat, &count) != KERN_SUCCESS) {
         return -1;
     }
-    uint64_t used = ((uint64_t)vmstat.active_count
+    /* 对齐「活动监视器 → 内存」口径：
+     *   App 内存 = internal - purgeable
+     *   已用     = App内存 + wired + compressed
+     * 原公式用 active_count 会漏掉大量已分配未活跃内存，低报约 15 个百分点。 */
+    uint64_t internal_pages  = (uint64_t)vmstat.internal_page_count;
+    uint64_t purgeable_pages = (uint64_t)vmstat.purgeable_count;
+    uint64_t app_mem = (internal_pages > purgeable_pages)
+                     ? (internal_pages - purgeable_pages) : 0;
+    uint64_t used = (app_mem
                    + (uint64_t)vmstat.wire_count
-                   + (uint64_t)vmstat.compressor_page_count) * (uint64_t)pageSize;
+                   + (uint64_t)vmstat.compressor_page_count) * pageSize;
     out->total = totalMem;
     out->used  = used;
     out->percent = clamp01((double)used / (double)totalMem);
@@ -143,8 +170,9 @@ void sm_net_tick(void) {
     if (g_netPrimed) {
         double dt = now - g_netPrevTime;
         if (dt <= 0) dt = 1e-6;
-        if (up   >= g_netPrevUp)   g_netUpBps   = (double)(up   - g_netPrevUp)   / dt;
-        if (down >= g_netPrevDown) g_netDownBps = (double)(down - g_netPrevDown) / dt;
+        /* 接口移除 / 计数回绕时 down<prev，显式归零，避免保留上一拍的旧速率 */
+        g_netUpBps   = (up   >= g_netPrevUp)   ? (double)(up   - g_netPrevUp)   / dt : 0;
+        g_netDownBps = (down >= g_netPrevDown) ? (double)(down - g_netPrevDown) / dt : 0;
     }
     g_netPrevUp   = up;
     g_netPrevDown = down;

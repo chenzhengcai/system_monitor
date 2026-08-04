@@ -1,0 +1,13 @@
+# 构建产物
+.build/
+*.app/
+
+# 系统文件
+.DS_Store
+
+# Xcode / 编辑器
+*.swp
+*~
+
+# 日志
+*.log
