@@ -58,17 +58,17 @@ struct StatsContent: View {
     private func memColor(_ p: Double) -> Color { dynamicColor(p, low: memLow) }
     private func diskColor(_ p: Double) -> Color { dynamicColor(p, low: diskLow) }
 
-    /// 根据进度返回颜色：<50% 低色 / 50-85% 橙 / >85% 红，区间内平滑过渡
+    /// 根据进度返回颜色：<50% 低色 / 50-80% 橙 / >80% 红，区间内平滑过渡
     private func dynamicColor(_ p: Double, low: Color) -> Color {
         if p <= 0.5 {
             return low
-        } else if p <= 0.85 {
+        } else if p <= 0.80 {
             // 50% → 85%：从低色平滑过渡到橙色
-            let t = (p - 0.5) / 0.35
+            let t = (p - 0.5) / 0.30
             return mix(low, midColor, t: t)
         } else {
             // 85% → 100%：从橙色平滑过渡到红色
-            let t = min(1.0, (p - 0.85) / 0.15)
+            let t = min(1.0, (p - 0.80) / 0.20)
             return mix(midColor, highColor, t: t)
         }
     }
