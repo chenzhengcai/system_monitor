@@ -7,6 +7,8 @@ import OSLog
 final class WidgetPanel: NSPanel {
     private let settings: WidgetSettings
     private let hosting: WidgetHostView
+    private let glass: NSVisualEffectView
+    private let shadowContainer: NSView
     private var cancellables = Set<AnyCancellable>()
     private let logger = Logger(subsystem: "com.personal.systemmonitor", category: "panel")
 
@@ -18,6 +20,28 @@ final class WidgetPanel: NSPanel {
                 .environmentObject(settings)
         )
         self.hosting = WidgetHostView(rootView: rootView)
+
+        // 阴影容器：负责外阴影，不裁剪
+        self.shadowContainer = MovableShadowView()
+        shadowContainer.wantsLayer = true
+        shadowContainer.layer?.backgroundColor = NSColor.clear.cgColor
+        shadowContainer.layer?.cornerCurve = .continuous
+        shadowContainer.layer?.masksToBounds = false
+        shadowContainer.layer?.shadowColor = NSColor.black.withAlphaComponent(0.22).cgColor
+        shadowContainer.layer?.shadowOpacity = 1.0
+        shadowContainer.layer?.shadowRadius = 18
+        shadowContainer.layer?.shadowOffset = CGSize(width: 0, height: 8)
+
+        // 毛玻璃层：圆角裁切 + 透明度
+        self.glass = MovableVisualEffectView()
+        glass.material = .sheet
+        glass.blendingMode = .behindWindow
+        glass.state = .active
+        glass.wantsLayer = true
+        glass.layer?.cornerCurve = .continuous
+        glass.layer?.masksToBounds = true
+        glass.layer?.borderWidth = 1.0
+        glass.layer?.borderColor = NSColor.white.withAlphaComponent(0.22).cgColor
 
         super.init(contentRect: contentRect,
                    styleMask: [.borderless, .nonactivatingPanel],
@@ -35,37 +59,93 @@ final class WidgetPanel: NSPanel {
         self.standardWindowButton(.closeButton)?.isHidden = true
         self.standardWindowButton(.miniaturizeButton)?.isHidden = true
         self.standardWindowButton(.zoomButton)?.isHidden = true
-        self.hasShadow = false   // 透明背景，无需投影
+        self.hasShadow = false
 
-        self.contentView = hosting
-        // 初始以 scale=1 的理想尺寸贴合（强制布局确保 fittingSize 已就绪）
+        self.contentView = shadowContainer
+
+        glass.translatesAutoresizingMaskIntoConstraints = false
+        hosting.translatesAutoresizingMaskIntoConstraints = false
+        shadowContainer.addSubview(glass)
+        shadowContainer.addSubview(hosting)
+
+        NSLayoutConstraint.activate([
+            glass.leadingAnchor.constraint(equalTo: shadowContainer.leadingAnchor),
+            glass.trailingAnchor.constraint(equalTo: shadowContainer.trailingAnchor),
+            glass.topAnchor.constraint(equalTo: shadowContainer.topAnchor),
+            glass.bottomAnchor.constraint(equalTo: shadowContainer.bottomAnchor),
+
+            hosting.leadingAnchor.constraint(equalTo: shadowContainer.leadingAnchor),
+            hosting.trailingAnchor.constraint(equalTo: shadowContainer.trailingAnchor),
+            hosting.topAnchor.constraint(equalTo: shadowContainer.topAnchor),
+            hosting.bottomAnchor.constraint(equalTo: shadowContainer.bottomAnchor),
+        ])
+
+        // 初始应用圆角 + 透明度
+        applyGlassRadius()
+        applyGlassOpacity()
+        shadowContainer.layoutSubtreeIfNeeded()
+        glass.layoutSubtreeIfNeeded()
         hosting.layoutSubtreeIfNeeded()
         self.setContentSize(hosting.fittingSize)
 
-        // 缩放变化时：重算尺寸并保持右上角锚点不动
+        // 缩放联动
         settings.$scale
             .removeDuplicates()
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.resizeKeepingTopRight()
+                self?.applyGlassRadius()
             }
             .store(in: &cancellables)
+
+        // 透明度联动
+        settings.$opacity
+            .removeDuplicates()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.applyGlassOpacity()
+            }
+            .store(in: &cancellables)
+    }
+
+    private func applyGlassRadius() {
+        let radius = 48 * CGFloat(settings.scale)
+        glass.layer?.cornerRadius = radius
+        shadowContainer.layer?.cornerRadius = radius
+        shadowContainer.layer?.shadowPath = CGPath(
+            roundedRect: shadowContainer.bounds,
+            cornerWidth: radius,
+            cornerHeight: radius,
+            transform: nil
+        )
+    }
+
+    private func applyGlassOpacity() {
+        glass.alphaValue = CGFloat(settings.opacity)
+    }
+
+    override func layoutIfNeeded() {
+        super.layoutIfNeeded()
+        let radius = 48 * CGFloat(settings.scale)
+        shadowContainer.layer?.shadowPath = CGPath(
+            roundedRect: shadowContainer.bounds,
+            cornerWidth: radius,
+            cornerHeight: radius,
+            transform: nil
+        )
     }
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 
-    /// 右键菜单在整个面板区域任意位置生效（含圆环间空隙），
-    /// 因为由窗口层接管，不依赖 SwiftUI 子视图的命中区。
     override func rightMouseDown(with event: NSEvent) {
         showContextMenu(with: event)
     }
 
-    /// 构造并弹出右键菜单（供窗口层与 hosting 子类共用）
     func showContextMenu(with event: NSEvent) {
         let menu = NSMenu()
 
-        // 「组件大小」子菜单：三档，当前档打勾
+        // 组件大小子菜单
         let sizeItem = menu.addItem(withTitle: "组件大小", action: nil, keyEquivalent: "")
         let sizeMenu = NSMenu()
         for (label, value) in [("小 50%", WidgetSettings.small),
@@ -80,9 +160,25 @@ final class WidgetPanel: NSPanel {
         }
         menu.setSubmenu(sizeMenu, for: sizeItem)
 
+        // 背景透明度子菜单
+        let opacityItem = menu.addItem(withTitle: "背景透明度", action: nil, keyEquivalent: "")
+        let opacityMenu = NSMenu()
+        for (label, value) in [("25%", WidgetSettings.opacity25),
+                                ("50%", WidgetSettings.opacity50),
+                                ("75%", WidgetSettings.opacity75),
+                                ("100%", WidgetSettings.opacity100)] {
+            let item = opacityMenu.addItem(withTitle: label,
+                                           action: #selector(setOpacity(_:)),
+                                           keyEquivalent: "")
+            item.target = self
+            item.representedObject = value
+            item.state = (abs(settings.opacity - value) < 1e-6) ? .on : .off
+        }
+        menu.setSubmenu(opacityMenu, for: opacityItem)
+
         menu.addItem(.separator())
 
-        // 「开机自启」勾选项：双向同步 SMAppService 状态（用户拥有最终控制权）
+        // 开机自启
         let loginItem = menu.addItem(withTitle: "开机自启",
                                      action: #selector(toggleLoginItem(_:)),
                                      keyEquivalent: "")
@@ -111,6 +207,12 @@ final class WidgetPanel: NSPanel {
         }
     }
 
+    @objc private func setOpacity(_ sender: NSMenuItem) {
+        if let v = sender.representedObject as? Double {
+            settings.opacity = v
+        }
+    }
+
     @objc private func toggleLoginItem(_ sender: NSMenuItem) {
         MainActor.assumeIsolated {
             (NSApp.delegate as? AppDelegate)?.toggleLoginItem()
@@ -129,7 +231,7 @@ final class WidgetPanel: NSPanel {
             return
         }
         NSWorkspace.shared.openApplication(at: url,
-                                           configuration: NSWorkspace.OpenConfiguration()) { [weak self] _, error in
+                                            configuration: NSWorkspace.OpenConfiguration()) { [weak self] _, error in
             if let error {
                 self?.logger.error("打开活动监视器失败: \(error.localizedDescription)")
             }
@@ -140,8 +242,6 @@ final class WidgetPanel: NSPanel {
         NSApp.terminate(nil)
     }
 
-    /// 按当前内容最小尺寸重设窗口，并保持右上角固定。
-    /// 先强制布局，确保 fittingSize 反映最新 scale（避免读到旧尺寸导致裁剪/留白）。
     private func resizeKeepingTopRight() {
         hosting.layoutSubtreeIfNeeded()
         let newSize = hosting.fittingSize
@@ -151,18 +251,25 @@ final class WidgetPanel: NSPanel {
         let maxY = f.maxY
         setContentSize(newSize)
         setFrameOrigin(NSPoint(x: maxX - newSize.width, y: maxY - newSize.height))
+        let radius = 48 * CGFloat(settings.scale)
+        shadowContainer.layer?.shadowPath = CGPath(
+            roundedRect: shadowContainer.bounds,
+            cornerWidth: radius,
+            cornerHeight: radius,
+            transform: nil
+        )
     }
 }
 
-/// hosting 视图子类：兜底接管「点在圆环/数字内容上」的右键。
-/// 空隙处的右键仍由 WidgetPanel.rightMouseDown 处理；两者都调用 showContextMenu。
 final class WidgetHostView: NSHostingView<AnyView> {
     required init(rootView: AnyView) {
         super.init(rootView: rootView)
     }
     required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
+        fatalError("init(coder:) has not been implemented)")
     }
+
+    override var mouseDownCanMoveWindow: Bool { true }
 
     override func rightMouseDown(with event: NSEvent) {
         if let panel = self.window as? WidgetPanel {
@@ -171,4 +278,12 @@ final class WidgetHostView: NSHostingView<AnyView> {
             super.rightMouseDown(with: event)
         }
     }
+}
+
+private final class MovableShadowView: NSView {
+    override var mouseDownCanMoveWindow: Bool { true }
+}
+
+private final class MovableVisualEffectView: NSVisualEffectView {
+    override var mouseDownCanMoveWindow: Bool { true }
 }
