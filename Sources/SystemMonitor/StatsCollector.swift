@@ -17,6 +17,14 @@ final class StatsCollector: ObservableObject {
     @Published var netUp: UInt64 = 0
     @Published var netDown: UInt64 = 0
 
+    // 历史曲线缓冲（近 60s，1 点/s）—— sparkline 的数据源
+    static let historyCapacity = 60
+    @Published var cpuHistory: [Double] = []
+    @Published var memHistory: [Double] = []
+    @Published var diskHistory: [Double] = []
+    @Published var netUpHistory: [Double] = []
+    @Published var netDownHistory: [Double] = []
+
     private let queue = DispatchQueue(label: "stats.collector", qos: .utility)
     private var lightTimer: DispatchSourceTimer?
     private var running = false
@@ -44,6 +52,14 @@ final class StatsCollector: ObservableObject {
     }
 
     // MARK: - private
+
+    /// 返回追加了新采样、并按容量裁剪后的新数组（调用方再赋回 @Published 触发刷新）。
+    private func appended(_ a: [Double], _ v: Double) -> [Double] {
+        var b = a
+        if b.count >= Self.historyCapacity { b.removeFirst() }
+        b.append(v)
+        return b
+    }
 
     private func onTick() {
         sm_cpu_tick()
@@ -82,6 +98,13 @@ final class StatsCollector: ObservableObject {
             self.diskFree    = newDiskFree
             self.netUp       = newUp
             self.netDown     = newDown
+
+            // 历史曲线缓冲（60s × 1s），供 sparkline 消费
+            self.cpuHistory     = self.appended(self.cpuHistory,     self.cpuPercent)
+            self.memHistory     = self.appended(self.memHistory,     self.memPercent)
+            self.diskHistory    = self.appended(self.diskHistory,    self.diskPercent)
+            self.netUpHistory   = self.appended(self.netUpHistory,   Double(self.netUp))
+            self.netDownHistory = self.appended(self.netDownHistory, Double(self.netDown))
         }
     }
 }

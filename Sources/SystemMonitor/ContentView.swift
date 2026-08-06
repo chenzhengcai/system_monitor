@@ -20,25 +20,49 @@ struct StatsContent: View {
     let scale: CGFloat
 
     var body: some View {
-        VStack(spacing: 18 * scale) {
+        VStack(spacing: 14 * scale) {
             HStack(spacing: 20 * scale) {
-                RingView(progress: stats.cpuPercent,
-                         color: cpuColor(stats.cpuPercent),
-                         centerLabel: "CPU",
-                         size: 72 * scale,
-                         lineWidth: 9 * scale)
-                RingView(progress: stats.memPercent,
-                         color: memColor(stats.memPercent),
-                         centerLabel: "内存",
-                         size: 72 * scale,
-                         lineWidth: 9 * scale)
-                RingView(progress: stats.diskPercent,
-                         color: diskColor(stats.diskPercent),
-                         centerLabel: "磁盘",
-                         size: 72 * scale,
-                         lineWidth: 9 * scale)
+                VStack(spacing: 6 * scale) {
+                    RingView(progress: stats.cpuPercent,
+                             color: cpuColor(stats.cpuPercent),
+                             centerLabel: "CPU",
+                             size: 72 * scale,
+                             lineWidth: 9 * scale)
+                    SparklineView(values: stats.cpuHistory,
+                                  color: cpuColor(stats.cpuPercent),
+                                  height: 10 * scale)
+                }
+
+                VStack(spacing: 6 * scale) {
+                    RingView(progress: stats.memPercent,
+                             color: memColor(stats.memPercent),
+                             centerLabel: "内存",
+                             size: 72 * scale,
+                             lineWidth: 9 * scale)
+                    SparklineView(values: stats.memHistory,
+                                  color: memColor(stats.memPercent),
+                                  height: 10 * scale)
+                }
+
+                VStack(spacing: 6 * scale) {
+                    RingView(progress: stats.diskPercent,
+                             color: diskColor(stats.diskPercent),
+                             centerLabel: "磁盘",
+                             size: 72 * scale,
+                             lineWidth: 9 * scale)
+                    SparklineView(values: stats.diskHistory,
+                                  color: diskColor(stats.diskPercent),
+                                  height: 10 * scale)
+                }
             }
-            NetworkView(up: stats.netUp, down: stats.netDown, scale: scale)
+            VStack(spacing: 4 * scale) {
+                NetworkView(up: stats.netUp, down: stats.netDown, scale: scale)
+                NetworkSparklineView(up: stats.netUpHistory,
+                                     down: stats.netDownHistory,
+                                     upColor: .green,
+                                     downColor: Color(red: 0.35, green: 0.55, blue: 1.0),
+                                     height: 14 * scale)
+            }
         }
     }
 
