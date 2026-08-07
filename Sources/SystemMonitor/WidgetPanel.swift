@@ -27,10 +27,10 @@ final class WidgetPanel: NSPanel {
         shadowContainer.layer?.backgroundColor = NSColor.clear.cgColor
         shadowContainer.layer?.cornerCurve = .continuous
         shadowContainer.layer?.masksToBounds = false
-        shadowContainer.layer?.shadowColor = NSColor.black.withAlphaComponent(0.22).cgColor
+        shadowContainer.layer?.shadowColor = NSColor.black.withAlphaComponent(0.28).cgColor
         shadowContainer.layer?.shadowOpacity = 1.0
-        shadowContainer.layer?.shadowRadius = 18
-        shadowContainer.layer?.shadowOffset = CGSize(width: 0, height: 8)
+        shadowContainer.layer?.shadowRadius = 22
+        shadowContainer.layer?.shadowOffset = CGSize(width: 0, height: 10)
 
         // 毛玻璃层：圆角裁切 + 透明度
         self.glass = MovableVisualEffectView()
