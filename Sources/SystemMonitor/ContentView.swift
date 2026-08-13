@@ -106,7 +106,7 @@ struct StatsContent: View {
 
     var body: some View {
         VStack(spacing: 14 * scale) {
-            HStack(spacing: 20 * scale) {
+            HStack(spacing: 0) {
                 metricColumn(
                     ringProgress: stats.cpuPercent,
                     ringColor: cpuColor(stats.cpuPercent),
@@ -115,6 +115,8 @@ struct StatsContent: View {
                     historyColor: cpuColor(stats.cpuPercent)
                 )
 
+                columnDivider
+
                 metricColumn(
                     ringProgress: stats.memPercent,
                     ringColor: memColor(stats.memPercent),
@@ -122,6 +124,8 @@ struct StatsContent: View {
                     history: stats.memHistory,
                     historyColor: memColor(stats.memPercent)
                 )
+
+                columnDivider
 
                 metricColumn(
                     ringProgress: stats.diskPercent,
@@ -143,6 +147,25 @@ struct StatsContent: View {
                     .padding(.bottom, 2 * scale)
             }
         }
+    }
+
+    /// 指标列之间的发丝级分隔线（上下渐隐，避免生硬）
+    private var columnDivider: some View {
+        Rectangle()
+            .fill(
+                LinearGradient(
+                    colors: [
+                        .clear,
+                        Color.primary.opacity(0.10),
+                        Color.primary.opacity(0.10),
+                        .clear
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+            .frame(width: 1, height: 78 * scale)
+            .padding(.horizontal, 9.5 * scale)
     }
 
     private func metricColumn(

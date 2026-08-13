@@ -7,7 +7,7 @@ import OSLog
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let stats = StatsCollector()
     let settings = WidgetSettings()
-    private var panel: NSPanel?
+    private var panel: WidgetPanel?
     private var observers: [NSObjectProtocol] = []
 
     private let logger = Logger(subsystem: "com.personal.systemmonitor", category: "lifecycle")
@@ -25,7 +25,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         ProcessInfo.processInfo.enableSuddenTermination()
-        if let panel { saveOrigin(panel.frame.origin) }
+        // 收起为标识条时保存展开态位置，重启后恢复为完整浮动面板
+        if let panel { saveOrigin(panel.persistableOrigin) }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

@@ -8,11 +8,7 @@ final class StatsCollector: ObservableObject {
 
     @Published var cpuPercent: Double = 0
     @Published var memPercent: Double = 0
-    @Published var memUsed: UInt64 = 0
-    @Published var memTotal: UInt64 = 0
     @Published var diskPercent: Double = 0
-    @Published var diskTotal: UInt64 = 0
-    @Published var diskFree: UInt64 = 0
     let diskPath: String = "/"   // 固定根目录，暂不支持切换
     @Published var netUp: UInt64 = 0
     @Published var netDown: UInt64 = 0
@@ -76,26 +72,18 @@ final class StatsCollector: ObservableObject {
         sm_get_network(&ni)
 
         // 先把需要跨线程传递的标量取出（避免捕获可变变量 → 消除并发告警）
-        let newCpu      = ci.percent
-        let newMem      = mi.percent
-        let newMemUsed  = mi.used
-        let newMemTotal = mi.total
-        let newDisk     = diskOk ? di.percent : 0
-        let newDiskTotal = diskOk ? di.total : 0
-        let newDiskFree  = diskOk ? di.free : 0
-        let newUp       = ni.up_bps
-        let newDown     = ni.down_bps
+        let newCpu  = ci.percent
+        let newMem  = mi.percent
+        let newDisk = diskOk ? di.percent : 0
+        let newUp   = ni.up_bps
+        let newDown = ni.down_bps
 
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             // CPU 做一阶低通平滑，减弱每秒抖动
             self.cpuPercent  = max(0, min(1, self.cpuPercent * 0.6 + newCpu * 0.4))
             self.memPercent  = max(0, min(1, newMem))
-            self.memUsed     = newMemUsed
-            self.memTotal    = newMemTotal
             self.diskPercent = max(0, min(1, newDisk))
-            self.diskTotal   = newDiskTotal
-            self.diskFree    = newDiskFree
             self.netUp       = newUp
             self.netDown     = newDown
 
