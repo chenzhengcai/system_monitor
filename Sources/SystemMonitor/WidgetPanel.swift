@@ -160,6 +160,8 @@ final class WidgetPanel: NSPanel {
         glass.layoutSubtreeIfNeeded()
         hosting.layoutSubtreeIfNeeded()
         self.setContentSize(hosting.fittingSize)
+        // 尺寸定型后重算阴影路径（上面 applyGlassRadius 拿到的还是初始 224x110 的 bounds）
+        applyGlassRadius()
 
         // 悬停回调：收起态 → 展开；展开态 → 取消收回计划 / 安排收回
         shadowContainer.onMouseEntered = { [weak self] in self?.handleMouseEntered() }
@@ -217,11 +219,13 @@ final class WidgetPanel: NSPanel {
         let viewSize = vertical
             ? NSSize(width: t + glowPad * 2, height: len + glowPad * 2)
             : NSSize(width: len + glowPad * 2, height: t + glowPad * 2)
+        let scale = NSApp.mainWindow?.screen?.backingScaleFactor
+            ?? NSScreen.main?.backingScaleFactor ?? 2
+        let pxW = Int(round(viewSize.width * scale))
+        let pxH = Int(round(viewSize.height * scale))
 
-        guard let rep = NSBitmapImageRep(
-            bitmapDataPlanes: nil,
-            pixelsWide: Int(viewSize.width),
-            pixelsHigh: Int(viewSize.height),
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil,
+            pixelsWide: pxW, pixelsHigh: pxH,
             bitsPerSample: 8, samplesPerPixel: 4,
             hasAlpha: true, isPlanar: false,
             colorSpaceName: .deviceRGB,
@@ -232,13 +236,13 @@ final class WidgetPanel: NSPanel {
         if let gc = NSGraphicsContext(bitmapImageRep: rep) {
             NSGraphicsContext.current = gc
             let ctx = gc.cgContext
-            // 翻转为 y 向下：CGImage 第 0 行 = 设计顶部，NSImageView 直接显示不颠倒
-            ctx.translateBy(x: 0, y: viewSize.height)
-            ctx.scaleBy(x: 1, y: -1)
+            // 先平移到顶部，再缩放 + 翻转 y，使绘制坐标为「点、左上角原点、y 向下」
+            ctx.translateBy(x: 0, y: viewSize.height * scale)
+            ctx.scaleBy(x: scale, y: -scale)
 
-            let rect = NSRect(x: glowPad + 0.5, y: glowPad + 0.5,
-                              width: (vertical ? t : len) - 1,
-                              height: (vertical ? len : t) - 1)
+            let rect = NSRect(x: glowPad, y: glowPad,
+                              width: (vertical ? t : len),
+                              height: (vertical ? len : t))
             let cap = min(rect.width, rect.height) / 2
             let path = NSBezierPath(roundedRect: rect, xRadius: cap, yRadius: cap)
 
@@ -274,6 +278,7 @@ final class WidgetPanel: NSPanel {
             gc.flushGraphics()
         }
         NSGraphicsContext.restoreGraphicsState()
+        rep.size = viewSize
 
         let img = NSImage(size: viewSize)
         img.addRepresentation(rep)
@@ -282,23 +287,31 @@ final class WidgetPanel: NSPanel {
 
     override func layoutIfNeeded() {
         super.layoutIfNeeded()
-        let radius = 48 * CGFloat(settings.scale)
-        shadowContainer.layer?.shadowPath = CGPath(
-            roundedRect: shadowContainer.bounds,
-            cornerWidth: radius,
-            cornerHeight: radius,
-            transform: nil
-        )
+        applyContainerShape(radius: 48 * CGFloat(settings.scale))
     }
 
     private func applyGlassRadius() {
         let radius = 48 * CGFloat(settings.scale)
         glass.layer?.cornerRadius = radius
-        shadowContainer.layer?.cornerRadius = radius
+        applyContainerShape(radius: radius)
+    }
+
+    /// 容器层圆角 = 窗口形状蒙版（含阴影路径），半径必须夹取到当前尺寸的一半以内。
+    /// 作用：
+    /// 1. 裁掉四角伸出玻璃圆弧之外的内容（SwiftUI 镜面高光带等「直角」残影）；
+    /// 2. 裁掉圆弧外的图层阴影：吸附->展开循环后阴影会改为窗口缓冲内渲染，
+    ///    矩形窗口的四个方角会露出方形阴影角（「吸附后再次打开出现四角」的根因）。
+    /// 教训（第十一轮）：半径绝不能超过尺寸的一半。18pt 宽的标识条上 48pt 圆角会产生
+    /// 自相交的退化轮廓，窗口合成器按它裁切内容，把橙条掐成三段尖锥。因此所有更新点
+    /// （此处 + layoutIfNeeded + collapse/peek 完成回调）都用夹取值并随窗口尺寸联动。
+    private func applyContainerShape(radius: CGFloat) {
+        let b = shadowContainer.bounds
+        let r = min(radius, b.width / 2, b.height / 2)
+        shadowContainer.layer?.cornerRadius = r
         shadowContainer.layer?.shadowPath = CGPath(
-            roundedRect: shadowContainer.bounds,
-            cornerWidth: radius,
-            cornerHeight: radius,
+            roundedRect: b,
+            cornerWidth: r,
+            cornerHeight: r,
             transform: nil
         )
     }
@@ -561,6 +574,8 @@ final class WidgetPanel: NSPanel {
             self.hosting.isHidden = true
             // 细条状态下关掉面板的外阴影，只留标识条自己的橙色光晕
             self.shadowContainer.layer?.shadowOpacity = 0
+            // 窗口已到细条尺寸：蒙版收成胶囊（夹取半径），绝不出现退化轮廓
+            self.applyContainerShape(radius: 48 * CGFloat(self.settings.scale))
             // 阶段二：窗口到位后标识条淡入
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = 0.18
@@ -587,6 +602,8 @@ final class WidgetPanel: NSPanel {
         }, completionHandler: { [weak self] in
             guard let self, case .peeking = self.snapState else { return }
             self.indicator.isHidden = true
+            // 窗口已到完整尺寸：恢复 48pt 圆角蒙版（裁掉圆弧外的缓冲内阴影方角）
+            self.applyContainerShape(radius: 48 * CGFloat(self.settings.scale))
             // 阶段二：恢复内容约束并淡入
             self.unparkContent()
             self.glass.isHidden = false
@@ -767,13 +784,7 @@ final class WidgetPanel: NSPanel {
             }
         }
 
-        let radius = 48 * CGFloat(settings.scale)
-        shadowContainer.layer?.shadowPath = CGPath(
-            roundedRect: shadowContainer.bounds,
-            cornerWidth: radius,
-            cornerHeight: radius,
-            transform: nil
-        )
+        applyContainerShape(radius: 48 * CGFloat(settings.scale))
     }
 }
 

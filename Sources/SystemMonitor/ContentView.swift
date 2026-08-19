@@ -12,6 +12,10 @@ struct ContentView: View {
         .padding(18 * s)
         .frame(width: 310 * s)
         .overlay(PanelRimOverlay(scale: s))
+        // 裁剪到面板圆角形状：PanelRimOverlay 的镜面高光带（圆角 28.8pt）与
+        // 左右侧暗化条（全高矩形）在四角会伸出玻璃层 48pt 圆弧之外，形成「直角」
+        // 残影；这里把整个内容裁成与玻璃一致的圆角矩形，四角之外完全透明。
+        .clipShape(RoundedRectangle(cornerRadius: 48 * s, style: .continuous))
     }
 }
 
